@@ -9,7 +9,7 @@ pygame.init()
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 800
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Traffic Light Simulation (Fixed Edition v3)")
+pygame.display.set_caption("Traffic Light Simulation (Random Density Edition)")
 
 # Colors
 WHITE = (255, 255, 255)
@@ -20,8 +20,8 @@ YELLOW = (255, 255, 0)
 GREEN = (0, 255, 0)
 DARK_GRAY = (50, 50, 50)
 
-# --- Classes ---
 
+# --- Classes ---
 class TrafficLight:
     """Represents a traffic light at the intersection."""
     def __init__(self, x, y, orientation):
@@ -65,6 +65,7 @@ class TrafficLight:
             pygame.draw.circle(surface, YELLOW if self.state == 'yellow' else GRAY, (self.x + 45, self.y + 15), 10)
             pygame.draw.circle(surface, GREEN if self.state == 'green' else GRAY, (self.x + 75, self.y + 15), 10)
 
+
 class Car(pygame.sprite.Sprite):
     """Represents a car in the simulation."""
     def __init__(self, x, y, direction, maneuver):
@@ -91,7 +92,7 @@ class Car(pygame.sprite.Sprite):
 
         # --- Collision Avoidance ---
         sensor_rect = self.rect.copy()
-        sensor_distance = 30  # Adjusted for better detection
+        sensor_distance = 30
         if self.direction == 'up':
             sensor_rect.y -= sensor_distance
         elif self.direction == 'down':
@@ -108,11 +109,11 @@ class Car(pygame.sprite.Sprite):
 
         # --- Traffic Light Stopping Logic ---
         light = vertical_light if self.original_direction == 'up' else horizontal_light
-        stop_line = 480 if self.original_direction == 'up' else 340  # Adjusted stop line for westbound
+        stop_line = 480 if self.original_direction == 'up' else 340
         front_edge = self.rect.bottom if self.original_direction == 'up' else self.rect.right
 
         if can_move and not self.is_turning:
-            if light.state != 'green' and front_edge >= stop_line - self.speed * dt and front_edge <= stop_line + 10:
+            if light.state != 'green' and stop_line - self.speed * dt <= front_edge <= stop_line + 10:
                 can_move = False
 
         # --- Turning Logic ---
@@ -121,12 +122,10 @@ class Car(pygame.sprite.Sprite):
             new_direction = self.direction
 
             if self.maneuver == 'left':
-                # From west (right/eastbound) turning north (up)
-                if self.original_direction == 'right' and self.rect.centerx >= 360:  # Earlier turn trigger
+                if self.original_direction == 'right' and self.rect.centerx >= 360:
                     new_direction = 'up'
                     turn_initiated = True
             elif self.maneuver == 'right':
-                # From south (up/northbound) turning east (right)
                 if self.original_direction == 'up' and self.rect.centery <= 420:
                     new_direction = 'right'
                     turn_initiated = True
@@ -136,11 +135,10 @@ class Car(pygame.sprite.Sprite):
                 self.direction = new_direction
                 old_center = self.rect.center
                 self.image = self.image_vertical if new_direction in ['up', 'down'] else self.image_horizontal
-                # Adjust position to land in correct lane
                 if new_direction == 'up':
-                    self.rect = self.image.get_rect(centery=old_center[1], centerx=370)  # Left lane
+                    self.rect = self.image.get_rect(centery=old_center[1], centerx=370)
                 elif new_direction == 'right':
-                    self.rect = self.image.get_rect(centerx=old_center[0], centery=420)  # Bottom lane
+                    self.rect = self.image.get_rect(centerx=old_center[0], centery=420)
                 else:
                     self.rect = self.image.get_rect(center=old_center)
 
@@ -161,25 +159,20 @@ class Car(pygame.sprite.Sprite):
             self.rect.right < 0 or self.rect.left > SCREEN_WIDTH):
             self.kill()
 
+
 def draw_roads(surface):
     """Draws the intersection roads."""
-    # Vertical road (one-way northbound)
     pygame.draw.rect(surface, GRAY, (350, 0, 100, SCREEN_HEIGHT))
-    # Horizontal road (one-way eastbound)
     pygame.draw.rect(surface, GRAY, (0, 350, SCREEN_WIDTH, 100))
-    # Center lines, limited to arms outside intersection
-    # Vertical road: north arm (y=0 to 350)
     for y in range(0, 350, 40):
         pygame.draw.rect(surface, WHITE, (398, y, 4, 20))
-    # Vertical road: south arm (y=450 to 800)
     for y in range(450, SCREEN_HEIGHT, 40):
         pygame.draw.rect(surface, WHITE, (398, y, 4, 20))
-    # Horizontal road: west arm (x=0 to 350)
     for x in range(0, 350, 40):
         pygame.draw.rect(surface, WHITE, (x, 398, 20, 4))
-    # Horizontal road: east arm (x=450 to 800)
     for x in range(450, SCREEN_WIDTH, 40):
         pygame.draw.rect(surface, WHITE, (x, 398, 20, 4))
+
 
 def main():
     """Main game loop."""
@@ -191,6 +184,7 @@ def main():
 
     all_sprites = pygame.sprite.Group()
     car_spawn_timer = 0
+    spawn_interval = random.uniform(0.5, 3.0)  # Randomized spawn timing
 
     last_time = time.time()
 
@@ -210,30 +204,38 @@ def main():
         horizontal_light.update(dt)
         all_sprites.update(dt, vertical_light, horizontal_light, all_sprites)
 
-        # Spawn new cars from south and west only
+        # --- Random Car Spawning ---
         car_spawn_timer += dt
-        if car_spawn_timer > 1.5:
+        if car_spawn_timer > spawn_interval:
             car_spawn_timer = 0
-            spawn_point = random.choice(['south', 'west'])
+            spawn_interval = random.uniform(0.5, 3.0)  # Reset interval randomly
 
-            car = None
-            if spawn_point == 'south':
-                maneuver = random.choice(['straight', 'straight', 'right'])  # Favor straight, legal only
-                if maneuver == 'right':
-                    x = 410  # Right lane for right turn
-                else:
-                    x = random.choice([370, 410])  # Either lane for straight
-                car = Car(x, SCREEN_HEIGHT, 'up', maneuver)
-            elif spawn_point == 'west':
-                maneuver = random.choice(['straight', 'straight', 'left'])  # Favor straight, legal only
-                if maneuver == 'left':
-                    y = 370  # Top lane for left turn
-                else:
-                    y = random.choice([370, 410])  # Either lane for straight
-                car = Car(-40, y, 'right', maneuver)
+            # Randomly spawn multiple cars for traffic waves
+            num_cars = 1
+            if random.random() < 0.2:  # 20% chance for extra cars
+                num_cars = random.randint(2, 4)
 
-            if car:
-                all_sprites.add(car)
+            for _ in range(num_cars):
+                spawn_point = random.choice(['south', 'west'])
+                car = None
+                if spawn_point == 'south':
+                    maneuver = random.choice(['straight', 'straight', 'right'])
+                    if maneuver == 'right':
+                        x = 410
+                    else:
+                        x = random.choice([370, 410])
+                    car = Car(x, SCREEN_HEIGHT, 'up', maneuver)
+
+                elif spawn_point == 'west':
+                    maneuver = random.choice(['straight', 'straight', 'left'])
+                    if maneuver == 'left':
+                        y = 370
+                    else:
+                        y = random.choice([370, 410])
+                    car = Car(-40, y, 'right', maneuver)
+
+                if car:
+                    all_sprites.add(car)
 
         # --- Drawing ---
         screen.fill(BLACK)
@@ -244,11 +246,10 @@ def main():
 
         # --- Update Display ---
         pygame.display.flip()
-
-        # --- Frame Rate ---
         clock.tick(60)
 
     pygame.quit()
+
 
 if __name__ == "__main__":
     main()
