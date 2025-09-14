@@ -19,6 +19,7 @@ RED = (255, 0, 0)
 YELLOW = (255, 255, 0)
 GREEN = (0, 255, 0)
 DARK_GRAY = (50, 50, 50)
+BLUE = (0, 0, 255) # Added for emergency vehicle
 
 # --- Classes ---
 class TrafficLight:
@@ -180,6 +181,43 @@ class Car(pygame.sprite.Sprite):
             self.kill()
             return  # return early after killing so rest of update isn't used
 
+class EmergencyVehicle(Car):
+    """Represents an emergency vehicle with flashing lights."""
+    def __init__(self, x, y, direction, maneuver):
+        # Initialize the parent Car class
+        super().__init__(x, y, direction, maneuver)
+
+        # Override properties for the emergency vehicle
+        self.speed = random.uniform(200, 250)  # Slightly faster
+        self.color1 = RED
+        self.color2 = BLUE
+        self.color = self.color1  # Start with red
+        self.flashing_timer = 0
+        self.flash_interval = 0.2  # Time in seconds between flashes
+
+        # Update the surfaces with the new starting color
+        self.image_vertical.fill(self.color)
+        self.image_horizontal.fill(self.color)
+        self.image = self.image_vertical if direction in ['up', 'down'] else self.image_horizontal
+
+    def update(self, dt, vertical_light, horizontal_light, all_sprites):
+        # Handle the flashing light logic
+        self.flashing_timer += dt
+        if self.flashing_timer >= self.flash_interval:
+            self.flashing_timer = 0
+            # Switch color
+            self.color = self.color2 if self.color == self.color1 else self.color1
+            
+            # Update surfaces with the new color
+            self.image_vertical.fill(self.color)
+            self.image_horizontal.fill(self.color)
+            # Re-assign the correct image based on current direction
+            self.image = self.image_vertical if self.direction in ['up', 'down'] else self.image_horizontal
+
+        # Call the parent class's update method to handle movement, collision, etc.
+        super().update(dt, vertical_light, horizontal_light, all_sprites)
+
+
 def draw_roads(surface):
     """Draws the intersection roads."""
     pygame.draw.rect(surface, GRAY, (350, 0, 100, SCREEN_HEIGHT))
@@ -265,9 +303,16 @@ def main():
 
                 # Only spawn if the area is clear
                 if is_spawn_clear(all_sprites, x, y, direction):
-                    car = Car(x, y, direction, maneuver)
+                    # 10% chance to spawn an EmergencyVehicle
+                    if random.random() < 0.1:
+                        car = EmergencyVehicle(x, y, direction, maneuver)
+                        print_prefix = "Added EMERGENCY vehicle"
+                    else:
+                        car = Car(x, y, direction, maneuver)
+                        print_prefix = "Added car"
+
                     all_sprites.add(car)
-                    print(f"Added car id {car.id} from {spawn_point} maneuver {car.maneuver} at {car.rect.topleft}")
+                    print(f"{print_prefix} id {car.id} from {spawn_point} maneuver {car.maneuver} at {car.rect.topleft}")
 
             print(f"Spawn event {spawn_count}: sprite count = {len(all_sprites)}")
             spawn_count += 1
