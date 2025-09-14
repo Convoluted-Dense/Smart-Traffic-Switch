@@ -9,7 +9,7 @@ pygame.init()
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 800
 screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Traffic Light Simulation (Random Density Edition)")
+pygame.display.set_caption("Traffic Light Simulation (Infinite Spawn)")
 
 # Colors
 WHITE = (255, 255, 255)
@@ -19,7 +19,6 @@ RED = (255, 0, 0)
 YELLOW = (255, 255, 0)
 GREEN = (0, 255, 0)
 DARK_GRAY = (50, 50, 50)
-
 
 # --- Classes ---
 class TrafficLight:
@@ -65,11 +64,16 @@ class TrafficLight:
             pygame.draw.circle(surface, YELLOW if self.state == 'yellow' else GRAY, (self.x + 45, self.y + 15), 10)
             pygame.draw.circle(surface, GREEN if self.state == 'green' else GRAY, (self.x + 75, self.y + 15), 10)
 
-
 class Car(pygame.sprite.Sprite):
     """Represents a car in the simulation."""
+    _id_counter = 0  # class-level counter for unique IDs
+
     def __init__(self, x, y, direction, maneuver):
         super().__init__()
+        # assign a small unique id to each car for easier debug
+        self.id = Car._id_counter
+        Car._id_counter += 1
+
         self.original_direction = direction
         self.direction = direction
         self.speed = random.uniform(100, 200)  # Pixels per second
@@ -102,18 +106,33 @@ class Car(pygame.sprite.Sprite):
         elif self.direction == 'left':
             sensor_rect.x -= sensor_distance
 
-        for car in all_sprites:
-            if car != self and sensor_rect.colliderect(car.rect):
+        # iterate over a snapshot of sprites to avoid surprises if group changes while iterating
+        for car in list(all_sprites):
+            if car is self:
+                continue
+            if sensor_rect.colliderect(car.rect):
                 can_move = False
                 break
 
         # --- Traffic Light Stopping Logic ---
-        light = vertical_light if self.original_direction == 'up' else horizontal_light
-        stop_line = 480 if self.original_direction == 'up' else 340
-        front_edge = self.rect.bottom if self.original_direction == 'up' else self.rect.right
+        light = vertical_light if self.original_direction in ['up', 'down'] else horizontal_light
+        stop_line_up = 480
+        stop_line_down = 310
+        stop_line_left = 480
+        stop_line_right = 310
 
-        if can_move and not self.is_turning:
-            if light.state != 'green' and stop_line - self.speed * dt <= front_edge <= stop_line + 10:
+        stop_line = 0
+        front_edge = 0
+
+        if self.original_direction == 'up':
+            stop_line = stop_line_up
+            front_edge = self.rect.top
+            if can_move and not self.is_turning and light.state != 'green' and stop_line + 5 >= front_edge >= stop_line - self.rect.height:
+                can_move = False
+        elif self.original_direction == 'right':
+            stop_line = stop_line_right
+            front_edge = self.rect.right
+            if can_move and not self.is_turning and light.state != 'green' and stop_line - 5 <= front_edge <= stop_line + self.rect.width:
                 can_move = False
 
         # --- Turning Logic ---
@@ -154,11 +173,12 @@ class Car(pygame.sprite.Sprite):
             elif self.direction == 'right':
                 self.rect.x += move_amount
 
-        # Remove car if off-screen
+        # Remove car if off-screen and log immediately after removal for debug
         if (self.rect.bottom < 0 or self.rect.top > SCREEN_HEIGHT or
-            self.rect.right < 0 or self.rect.left > SCREEN_WIDTH):
+                self.rect.right < 0 or self.rect.left > SCREEN_WIDTH):
+            print(f"Removing car id {self.id} at position {self.rect.topleft}, direction {self.direction}")
             self.kill()
-
+            return  # return early after killing so rest of update isn't used
 
 def draw_roads(surface):
     """Draws the intersection roads."""
@@ -173,6 +193,23 @@ def draw_roads(surface):
     for x in range(450, SCREEN_WIDTH, 40):
         pygame.draw.rect(surface, WHITE, (x, 398, 20, 4))
 
+# Add this before the main loop
+last_spawn_time = {0: 0, 1: 0, 2: 0, 3: 0}  # one entry per spawn point
+spawn_cooldown = 1000  # milliseconds (1 sec per spawn point)
+
+def is_spawn_clear(all_sprites, x, y, direction):
+    """Check if the spawn area is clear for a new car."""
+    if direction == 'up':
+        spawn_rect = pygame.Rect(x, y, 20, 40)
+    elif direction == 'right':
+        spawn_rect = pygame.Rect(x, y, 40, 20)
+    else:
+        return True  # fallback, should not happen
+
+    for car in all_sprites:
+        if spawn_rect.colliderect(car.rect):
+            return False
+    return True
 
 def main():
     """Main game loop."""
@@ -184,9 +221,12 @@ def main():
 
     all_sprites = pygame.sprite.Group()
     car_spawn_timer = 0
-    spawn_interval = random.uniform(0.5, 3.0)  # Randomized spawn timing
+    SPAWN_INTERVAL_MIN = 0.5
+    SPAWN_INTERVAL_MAX = 2.0
+    spawn_interval = random.uniform(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_MAX)
 
     last_time = time.time()
+    spawn_count = 0  # Debug: Track number of spawn events
 
     while running:
         # --- Event Handling ---
@@ -195,47 +235,42 @@ def main():
                 running = False
 
         # --- Time Management ---
-        current_time = time.time()
-        dt = current_time - last_time
-        last_time = current_time
+        # only call clock.tick once per frame (this returns milliseconds since last call)
+        dt = clock.tick(60) / 1000.0
 
         # --- Game Logic ---
         vertical_light.update(dt)
         horizontal_light.update(dt)
         all_sprites.update(dt, vertical_light, horizontal_light, all_sprites)
 
-        # --- Random Car Spawning ---
+        # --- Car Spawning: Only one car per spawn point per second, and only if clear ---
         car_spawn_timer += dt
-        if car_spawn_timer > spawn_interval:
-            car_spawn_timer = 0
-            spawn_interval = random.uniform(0.5, 3.0)  # Reset interval randomly
+        if car_spawn_timer >= 1.0:
+            car_spawn_timer -= 1.0
 
-            # Randomly spawn multiple cars for traffic waves
-            num_cars = 1
-            if random.random() < 0.2:  # 20% chance for extra cars
-                num_cars = random.randint(2, 4)
-
-            for _ in range(num_cars):
-                spawn_point = random.choice(['south', 'west'])
+            for spawn_point in ['south', 'west']:
                 car = None
                 if spawn_point == 'south':
                     maneuver = random.choice(['straight', 'straight', 'right'])
-                    if maneuver == 'right':
-                        x = 410
-                    else:
-                        x = random.choice([370, 410])
-                    car = Car(x, SCREEN_HEIGHT, 'up', maneuver)
-
+                    x = 410 if maneuver == 'right' else random.choice([370, 410])
+                    y = SCREEN_HEIGHT
+                    direction = 'up'
                 elif spawn_point == 'west':
                     maneuver = random.choice(['straight', 'straight', 'left'])
-                    if maneuver == 'left':
-                        y = 370
-                    else:
-                        y = random.choice([370, 410])
-                    car = Car(-40, y, 'right', maneuver)
+                    y = 370 if maneuver == 'left' else random.choice([370, 410])
+                    x = -40
+                    direction = 'right'
+                else:
+                    continue
 
-                if car:
+                # Only spawn if the area is clear
+                if is_spawn_clear(all_sprites, x, y, direction):
+                    car = Car(x, y, direction, maneuver)
                     all_sprites.add(car)
+                    print(f"Added car id {car.id} from {spawn_point} maneuver {car.maneuver} at {car.rect.topleft}")
+
+            print(f"Spawn event {spawn_count}: sprite count = {len(all_sprites)}")
+            spawn_count += 1
 
         # --- Drawing ---
         screen.fill(BLACK)
@@ -246,10 +281,9 @@ def main():
 
         # --- Update Display ---
         pygame.display.flip()
-        clock.tick(60)
+        # (no second clock.tick here)
 
     pygame.quit()
-
 
 if __name__ == "__main__":
     main()
