@@ -4,6 +4,7 @@ import time
 
 # Initialize Pygame
 pygame.init()
+font = pygame.font.SysFont(None, 32)  # Add this line
 
 # Screen dimensions
 SCREEN_WIDTH = 800
@@ -19,7 +20,7 @@ RED = (255, 0, 0)
 YELLOW = (255, 255, 0)
 GREEN = (0, 255, 0)
 DARK_GRAY = (50, 50, 50)
-BLUE = (0, 0, 255) # Added for emergency vehicle
+BLUE = (0, 0, 255)
 
 # --- Classes ---
 class TrafficLight:
@@ -78,7 +79,8 @@ class Car(pygame.sprite.Sprite):
         self.original_direction = direction
         self.direction = direction
         self.speed = random.uniform(100, 200)  # Pixels per second
-        self.color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+        # --- MODIFIED: Changed car color to white ---
+        self.color = WHITE
         self.maneuver = maneuver
         self.is_turning = False
 
@@ -90,6 +92,10 @@ class Car(pygame.sprite.Sprite):
 
         self.image = self.image_vertical if direction in ['up', 'down'] else self.image_horizontal
         self.rect = self.image.get_rect(topleft=(x, y))
+
+        # For waiting time tracking
+        self.waiting_time = 0.0
+        self._was_stopped = False
 
     def update(self, dt, vertical_light, horizontal_light, all_sprites):
         """Moves the car and handles traffic light, turning, and collision logic."""
@@ -136,6 +142,13 @@ class Car(pygame.sprite.Sprite):
             if can_move and not self.is_turning and light.state != 'green' and stop_line - 5 <= front_edge <= stop_line + self.rect.width:
                 can_move = False
 
+        # --- Waiting time tracking ---
+        if not can_move:
+            self.waiting_time += dt
+            self._was_stopped = True
+        else:
+            self._was_stopped = False
+
         # --- Turning Logic ---
         if can_move and self.maneuver != 'straight' and not self.is_turning:
             turn_initiated = False
@@ -174,26 +187,24 @@ class Car(pygame.sprite.Sprite):
             elif self.direction == 'right':
                 self.rect.x += move_amount
 
-        # Remove car if off-screen and log immediately after removal for debug
+        # Remove car if off-screen and store waiting time for stats
         if (self.rect.bottom < 0 or self.rect.top > SCREEN_HEIGHT or
                 self.rect.right < 0 or self.rect.left > SCREEN_WIDTH):
-            print(f"Removing car id {self.id} at position {self.rect.topleft}, direction {self.direction}")
+            # Save waiting time to global list before removal
+            if hasattr(self, "waiting_time") and self.waiting_time > 0:
+                finished_waiting_times.append(self.waiting_time)
             self.kill()
             return  # return early after killing so rest of update isn't used
 
 class EmergencyVehicle(Car):
-    """Represents an emergency vehicle with flashing lights."""
+    """Represents an emergency vehicle."""
     def __init__(self, x, y, direction, maneuver):
         # Initialize the parent Car class
         super().__init__(x, y, direction, maneuver)
 
-        # Override properties for the emergency vehicle
+        # --- MODIFIED: Override properties for the emergency vehicle to be solid red ---
         self.speed = random.uniform(200, 250)  # Slightly faster
-        self.color1 = RED
-        self.color2 = BLUE
-        self.color = self.color1  # Start with red
-        self.flashing_timer = 0
-        self.flash_interval = 0.2  # Time in seconds between flashes
+        self.color = RED
 
         # Update the surfaces with the new starting color
         self.image_vertical.fill(self.color)
@@ -201,19 +212,7 @@ class EmergencyVehicle(Car):
         self.image = self.image_vertical if direction in ['up', 'down'] else self.image_horizontal
 
     def update(self, dt, vertical_light, horizontal_light, all_sprites):
-        # Handle the flashing light logic
-        self.flashing_timer += dt
-        if self.flashing_timer >= self.flash_interval:
-            self.flashing_timer = 0
-            # Switch color
-            self.color = self.color2 if self.color == self.color1 else self.color1
-            
-            # Update surfaces with the new color
-            self.image_vertical.fill(self.color)
-            self.image_horizontal.fill(self.color)
-            # Re-assign the correct image based on current direction
-            self.image = self.image_vertical if self.direction in ['up', 'down'] else self.image_horizontal
-
+        # --- MODIFIED: Removed flashing logic ---
         # Call the parent class's update method to handle movement, collision, etc.
         super().update(dt, vertical_light, horizontal_light, all_sprites)
 
@@ -231,10 +230,6 @@ def draw_roads(surface):
     for x in range(450, SCREEN_WIDTH, 40):
         pygame.draw.rect(surface, WHITE, (x, 398, 20, 4))
 
-# Add this before the main loop
-last_spawn_time = {0: 0, 1: 0, 2: 0, 3: 0}  # one entry per spawn point
-spawn_cooldown = 1000  # milliseconds (1 sec per spawn point)
-
 def is_spawn_clear(all_sprites, x, y, direction):
     """Check if the spawn area is clear for a new car."""
     if direction == 'up':
@@ -249,6 +244,9 @@ def is_spawn_clear(all_sprites, x, y, direction):
             return False
     return True
 
+# --- Global list to store waiting times of finished cars ---
+finished_waiting_times = []
+
 def main():
     """Main game loop."""
     clock = pygame.time.Clock()
@@ -262,9 +260,6 @@ def main():
     SPAWN_INTERVAL_MIN = 0.5
     SPAWN_INTERVAL_MAX = 2.0
     spawn_interval = random.uniform(SPAWN_INTERVAL_MIN, SPAWN_INTERVAL_MAX)
-
-    last_time = time.time()
-    spawn_count = 0  # Debug: Track number of spawn events
 
     while running:
         # --- Event Handling ---
@@ -304,18 +299,15 @@ def main():
                 # Only spawn if the area is clear
                 if is_spawn_clear(all_sprites, x, y, direction):
                     # 10% chance to spawn an EmergencyVehicle
-                    if random.random() < 0.1:
+                    if random.random() < 0.05:
                         car = EmergencyVehicle(x, y, direction, maneuver)
-                        print_prefix = "Added EMERGENCY vehicle"
+                        
                     else:
                         car = Car(x, y, direction, maneuver)
-                        print_prefix = "Added car"
+                       
 
                     all_sprites.add(car)
-                    print(f"{print_prefix} id {car.id} from {spawn_point} maneuver {car.maneuver} at {car.rect.topleft}")
-
-            print(f"Spawn event {spawn_count}: sprite count = {len(all_sprites)}")
-            spawn_count += 1
+                    
 
         # --- Drawing ---
         screen.fill(BLACK)
@@ -324,9 +316,25 @@ def main():
         horizontal_light.draw(screen)
         all_sprites.draw(screen)
 
+        # --- Draw live average waiting time ---
+        if finished_waiting_times:
+            avg_wait = sum(finished_waiting_times) / len(finished_waiting_times)
+            text = f"Avg waiting time: {avg_wait:.2f} s (n={len(finished_waiting_times)})"
+        else:
+            text = "Avg waiting time: N/A"
+        text_surf = font.render(text, True, YELLOW)
+        screen.blit(text_surf, (10, 10))
+
         # --- Update Display ---
         pygame.display.flip()
         # (no second clock.tick here)
+
+    # --- After simulation ends, print average waiting time ---
+    if finished_waiting_times:
+        avg_wait = sum(finished_waiting_times) / len(finished_waiting_times)
+        print(f"Average waiting time for cars that exited: {avg_wait:.2f} seconds (n={len(finished_waiting_times)})")
+    else:
+        print("No cars exited the simulation.")
 
     pygame.quit()
 
